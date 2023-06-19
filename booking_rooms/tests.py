@@ -1,8 +1,8 @@
-from datetime import datetime
+import datetime
 
 from rest_framework.reverse import reverse
 from rest_framework.test import APITestCase
-from booking_rooms.models import Room, RoomAvailability
+from booking_rooms.models import Room, RoomAvailability, BookingRoom
 
 
 class RoomListApiTestCase(APITestCase):
@@ -217,3 +217,152 @@ class RoomAvailabilityTestCase(APITestCase):
         self.assertEqual(response.data[1]['date'], self.room_availability_two.date)
         self.assertEqual(response.data[1]['start'], self.room_availability_two.start)
         self.assertEqual(response.data[1]['end'], self.room_availability_two.end)
+
+
+class RoomBookingTestCase(APITestCase):
+    def setUp(self) -> None:
+        self.room_one = Room.objects.create(name='new', type='conference', capacity=15)
+        date = datetime.date.today() + datetime.timedelta(days=10)
+        self.room_availability_one = RoomAvailability.objects.create(room=self.room_one, start=f'{date} 8:00:00',
+                                                                     end=f'{date} 10:00:00')
+
+    def test_room_booking_errors(self):
+        # day not found
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": 10}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": "2023-06-18 00:00:00",
+                                        "end": "2023-06-18 18:00:00"
+                                    },format="json")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['message'], 'Bunday xona topilmadi')
+
+        # resident error
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "start": "2023-06-18 00:00:00",
+                                        "end": "2023-06-18 18:00:00"
+                                    },format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], 'Iltimos resident ma\'lumotlarini kiriting')
+
+        # name error
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "nameaa": "Anvar Sanayev11"
+                                        },
+                                        "start": "2023-06-18 00:00:00",
+                                        "end": "2023-06-18 18:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], "Iltimos resinedtni ismini 'name' orqali kiriting")
+
+        # start or end error
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": "2023-06-18 00:00:00",
+                                    }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], "Iltimos start va end maydonlarni ikkisini ham kitiring")
+
+        # formation error
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                data={
+                                    "resident": {
+                                        "name": "Anvar Sanayev11"
+                                    },
+                                    "start": "06-18-2023  00:00:00",
+                                    "end": "2023-06-18 18:00:00"
+                                }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], "Iltimos sanalarnini y-o-k s-d-sek formatida kiriting")
+
+    def test_room_booking_validation(self):
+        # bad day
+        today = datetime.date.today() - datetime.timedelta(days=10)
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{today} 00:00:00",
+                                        "end": f"{today} 18:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertRaisesMessage(response.data, "Iltimos bugundan avvalgi kunni kiritmang")
+
+        # not equal day
+        today = datetime.date.today()
+        end = datetime.date.today() + datetime.timedelta(days=10)
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{today} 00:00:00",
+                                        "end": f"{end} 18:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertRaisesMessage(response.data, "start va end ga kiritayotgan kunlari bir xil bo'lishi kerak")
+
+        # not equal day
+        today = datetime.date.today()
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{today} 20:00:00",
+                                        "end": f"{today} 18:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertRaisesMessage(response.data, "start ning vaqti  endning vaqtidan kichik bo'lishi kerak")
+
+    def test_room_booking(self):
+        date = datetime.date.today() + datetime.timedelta(days=10)
+
+        # time not found
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{date} 8:00:00",
+                                        "end": f"{date} 19:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['message'], f"Xonaning {date} kuni uchun bosh vaqtlari topilmadi")
+
+        # booking
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{date} 8:00:00",
+                                        "end": f"{date} 10:00:00"
+                                    }, format="json")
+        booking_room = BookingRoom.objects.get(id=1)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['message'], "Xona muvaffaqiyatli band qilindi")
+        self.assertEqual(booking_room.resident_name, "Anvar Sanayev11")
+        self.assertEqual(booking_room.room_availability_id, self.room_availability_one.id)
+        self.assertEqual(booking_room.room_id, self.room_one.id)
+
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{date} 8:00:00",
+                                        "end": f"{date} 10:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(response.data['error'], "Uzr, siz tanlagan vaqtda xona band qilingan")
+
