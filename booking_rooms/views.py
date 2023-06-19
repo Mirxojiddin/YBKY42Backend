@@ -1,10 +1,12 @@
+from datetime import datetime, date
+
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 from rest_framework import pagination, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from booking_rooms.serializers import RoomSerializer
-from booking_rooms.models import Room
+from booking_rooms.serializers import RoomSerializer, RoomAvailabilitySerializer
+from booking_rooms.models import Room, RoomAvailability
 
 
 def check_day(pk):
@@ -62,3 +64,37 @@ class RoomDetailApiView(APIView):
         else:
             return result
 
+
+class RoomAvailabilityApiView(APIView):
+    def get(self, request, pk):
+        dates = request.GET.get('date', 0)
+        today = date.today()
+        if dates:
+            try:
+                date_format = '%Y-%m-%d'
+                date_obj = datetime.strptime(dates, date_format).date()
+                if date_obj < today:
+                    data = {
+                        "error": "Iltimos bugundan avvalgi kunni kiritmang"
+                    }
+                    return Response(data, status=status.HTTP_400_BAD_REQUEST)
+            except ValueError:
+                data = {
+                    "error": "Iltimos 'date' ni yil - oy - kun formatida kiriting"
+                }
+                return Response(data, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            date_obj = today
+        result = check_day(pk)
+        if isinstance(result, Room):
+            room_availability = RoomAvailability.objects.filter(Q(room=result) & Q(date=date_obj))
+            if room_availability:
+                serializer = RoomAvailabilitySerializer(room_availability, many=True)
+                return Response(data=serializer.data, status=status.HTTP_200_OK)
+            else:
+                data = {
+                    "massage": f"Xonaning {date_obj} kuni uchun bosh vaqtlari topilmadi"
+                }
+                return Response(data, status=status.HTTP_404_NOT_FOUND)
+        else:
+            return result
