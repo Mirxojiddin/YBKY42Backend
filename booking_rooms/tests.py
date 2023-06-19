@@ -137,3 +137,33 @@ class RoomListApiTestCase(APITestCase):
         self.assertEqual(response.data['page'], 1)
         self.assertEqual(response.data['page_size'], 10)
 
+
+class RoomDetailApiTestCase(APITestCase):
+    def setUp(self) -> None:
+        self.room_one = Room.objects.create(name='new', type='conference', capacity=15)
+        self.room_two = Room.objects.create(name='old', type='team', capacity=8)
+        self.room_three = Room.objects.create(name='again', type='focus', capacity=1)
+
+    def test_room_detail(self):
+        # room not found
+        response = self.client.get(reverse("booking_rooms:detail", kwargs={"pk": 10}))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data['message'], 'Bunday xona topilmadi')
+
+        # room detail
+        response = self.client.get(reverse("booking_rooms:detail", kwargs={"pk": self.room_two.id}))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 4)
+        self.assertEqual(response.data['id'], self.room_two.id)
+        self.assertEqual(response.data['name'], self.room_two.name)
+        self.assertEqual(response.data['type'], self.room_two.type)
+        self.assertEqual(response.data['capacity'], self.room_two.capacity)
+
+        # room detail
+        response = self.client.get(reverse("booking_rooms:detail", kwargs={"pk": self.room_three.id}))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 4)
+        self.assertEqual(response.data['id'], self.room_three.id)
+        self.assertEqual(response.data['name'], self.room_three.name)
+        self.assertEqual(response.data['type'], self.room_three.type)
+        self.assertEqual(response.data['capacity'], self.room_three.capacity)
