@@ -51,3 +51,14 @@ class RoomListApiView(APIView):
                 'results': serializer
             }
             return Response(data, status=status.HTTP_200_OK)
+
+
+class RoomDetailApiView(APIView):
+    def get(self, request, pk):
+        result = check_day(pk)
+        if isinstance(result, Room):
+            serializer = RoomSerializer(result)
+            return Response(data=serializer.data, status=status.HTTP_200_OK)
+        else:
+            return result
+
