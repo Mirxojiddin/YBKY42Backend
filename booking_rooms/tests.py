@@ -146,9 +146,9 @@ class RoomDetailApiTestCase(APITestCase):
 
     def test_room_detail(self):
         # room not found
-        response = self.client.get(reverse("booking_rooms:detail", kwargs={"pk": 10}))
+        response = self.client.get(reverse("booking_rooms:detail", kwargs={"pk": 91}))
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data['message'], 'Bunday xona topilmadi')
+        self.assertEqual(response.data['error'], 'topilmadi')
 
         # room detail
         response = self.client.get(reverse("booking_rooms:detail", kwargs={"pk": self.room_two.id}))
@@ -183,17 +183,17 @@ class RoomAvailabilityTestCase(APITestCase):
         # room not found
         response = self.client.get(reverse("booking_rooms:availability", kwargs={"pk": 10}))
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data['message'], 'Bunday xona topilmadi')
+        self.assertEqual(response.data['error'], 'topilmadi')
 
         # bad date format
         response = self.client.get(
-            reverse("booking_rooms:availability", kwargs={"pk": self.room_one.id}) + '?date=06-07-2023')
+            reverse("booking_rooms:availability", kwargs={"pk": self.room_one.id}) + '?date=2023-06-07')
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['error'], "Iltimos 'date' ni yil - oy - kun formatida kiriting")
+        self.assertEqual(response.data['error'], "Iltimos 'date' ni [%d-%m-Y] formatida kiriting")
 
         # date < today
         response = self.client.get(
-            reverse("booking_rooms:availability", kwargs={"pk": self.room_one.id}) + '?date=2023-05-05')
+            reverse("booking_rooms:availability", kwargs={"pk": self.room_one.id}) + '?date=05-05-2023')
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['error'], "Iltimos bugundan avvalgi kunni kiritmang")
 
@@ -223,8 +223,10 @@ class RoomBookingTestCase(APITestCase):
     def setUp(self) -> None:
         self.room_one = Room.objects.create(name='new', type='conference', capacity=15)
         date = datetime.date.today() + datetime.timedelta(days=10)
-        self.room_availability_one = RoomAvailability.objects.create(room=self.room_one, start=f'{date} 8:00:00',
+        self.room_availability_one = RoomAvailability.objects.create(room=self.room_one, start=f'{date} 9:00:00',
                                                                      end=f'{date} 10:00:00')
+        self.room_availability_two = RoomAvailability.objects.create(room=self.room_one, start=f'{date} 10:00:00',
+                                                                     end=f'{date} 11:00:00')
 
     def test_room_booking_errors(self):
         # day not found
@@ -237,14 +239,14 @@ class RoomBookingTestCase(APITestCase):
                                         "end": "2023-06-18 18:00:00"
                                     },format="json")
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.data['message'], 'Bunday xona topilmadi')
+        self.assertEqual(response.data['error'], 'topilmadi')
 
         # resident error
         response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
                                     data={
                                         "start": "2023-06-18 00:00:00",
                                         "end": "2023-06-18 18:00:00"
-                                    },format="json")
+                                    }, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['error'], 'Iltimos resident ma\'lumotlarini kiriting')
 
@@ -281,7 +283,7 @@ class RoomBookingTestCase(APITestCase):
                                     "end": "2023-06-18 18:00:00"
                                 }, format="json")
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data['error'], "Iltimos sanalarnini y-o-k s-d-sek formatida kiriting")
+        self.assertEqual(response.data['error'], "Iltimos sanalarnini [%d-%m-%Y %H:%M:%S] formatida kiriting")
 
     def test_room_booking_validation(self):
         # bad day
@@ -326,6 +328,7 @@ class RoomBookingTestCase(APITestCase):
 
     def test_room_booking(self):
         date = datetime.date.today() + datetime.timedelta(days=10)
+        current_date_time = date.strftime("%d-%m-%Y")
 
         # time not found
         response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
@@ -333,20 +336,19 @@ class RoomBookingTestCase(APITestCase):
                                         "resident": {
                                             "name": "Anvar Sanayev11"
                                         },
-                                        "start": f"{date} 8:00:00",
-                                        "end": f"{date} 19:00:00"
+                                        "start": f"{current_date_time} 8:00:00",
+                                        "end": f"{current_date_time} 19:00:00"
                                     }, format="json")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.data['message'], f"Xonaning {date} kuni uchun bosh vaqtlari topilmadi")
-
         # booking
         response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
                                     data={
                                         "resident": {
                                             "name": "Anvar Sanayev11"
                                         },
-                                        "start": f"{date} 8:00:00",
-                                        "end": f"{date} 10:00:00"
+                                        "start": f"{current_date_time} 8:00:00",
+                                        "end": f"{current_date_time} 10:00:00"
                                     }, format="json")
         booking_room = BookingRoom.objects.get(id=1)
         self.assertEqual(response.status_code, 201)
@@ -360,9 +362,49 @@ class RoomBookingTestCase(APITestCase):
                                         "resident": {
                                             "name": "Anvar Sanayev11"
                                         },
-                                        "start": f"{date} 8:00:00",
-                                        "end": f"{date} 10:00:00"
+                                        "start": f"{current_date_time} 8:00:00",
+                                        "end": f"{current_date_time} 10:00:00"
                                     }, format="json")
         self.assertEqual(response.status_code, 410)
         self.assertEqual(response.data['error'], "Uzr, siz tanlagan vaqtda xona band qilingan")
 
+    def test_book_room_successfully(self):
+        date = datetime.date.today() + datetime.timedelta(days=10)
+        current_date_time = date.strftime("%d-%m-%Y")
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{current_date_time} 9:00:00",
+                                        "end": f"{current_date_time} 10:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 201)
+
+    def test_book_room_successfully2(self):
+        date = datetime.date.today() + datetime.timedelta(days=10)
+        current_date_time = date.strftime("%d-%m-%Y")
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{current_date_time} 10:00:00",
+                                        "end": f"{current_date_time} 11:00:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 201)
+
+    def test_book_room_busy3(self):
+        room = BookingRoom.objects.all()
+        print(room)
+        date = datetime.date.today() + datetime.timedelta(days=10)
+        current_date_time = date.strftime("%d-%m-%Y")
+        response = self.client.post(reverse("booking_rooms:book", kwargs={"pk": self.room_one.id}),
+                                    data={
+                                        "resident": {
+                                            "name": "Anvar Sanayev11"
+                                        },
+                                        "start": f"{current_date_time} 10:00:00",
+                                        "end": f"{current_date_time} 10:30:00"
+                                    }, format="json")
+        self.assertEqual(response.status_code, 201)

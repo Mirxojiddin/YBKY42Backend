@@ -1,11 +1,11 @@
 from datetime import datetime, date
-
+import json
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 from rest_framework import pagination, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from booking_rooms.serializers import RoomSerializer, RoomAvailabilitySerializer, BookingRoomSerializer
+from booking_rooms.serializers import RoomSerializer, BookingRoomSerializer
 from booking_rooms.models import Room, RoomAvailability, BookingRoom
 
 
@@ -15,7 +15,7 @@ def check_day(pk):
         return room
     except ObjectDoesNotExist:
         data = {
-            "message": "Bunday xona topilmadi"
+            "error": "topilmadi"
         }
         return Response(data, status=status.HTTP_404_NOT_FOUND)
 
@@ -65,14 +65,20 @@ class RoomDetailApiView(APIView):
             return result
 
 
+def remove_quotes(datetime_object):
+    return datetime_object.strftime("%Y-%m-%d %H:%M:%S")
+
+
 class RoomAvailabilityApiView(APIView):
     def get(self, request, pk):
         dates = request.GET.get('date', 0)
         today = date.today()
+        date_obj1 = date.today().strftime("%d-%m-%Y")
         if dates:
             try:
-                date_format = '%Y-%m-%d'
+                date_format = '%d-%m-%Y'
                 date_obj = datetime.strptime(dates, date_format).date()
+                date_obj1 = datetime.strptime(dates, date_format).date().strftime(date_format)
                 if date_obj < today:
                     data = {
                         "error": "Iltimos bugundan avvalgi kunni kiritmang"
@@ -80,22 +86,51 @@ class RoomAvailabilityApiView(APIView):
                     return Response(data, status=status.HTTP_400_BAD_REQUEST)
             except ValueError:
                 data = {
-                    "error": "Iltimos 'date' ni yil - oy - kun formatida kiriting"
+                    "error": "Iltimos 'date' ni [%d-%m-Y] formatida kiriting"
                 }
                 return Response(data, status=status.HTTP_400_BAD_REQUEST)
         else:
             date_obj = today
         result = check_day(pk)
         if isinstance(result, Room):
-            room_availability = RoomAvailability.objects.filter(Q(room=result) & Q(date=date_obj))
+            room_availability = BookingRoom.objects.filter(Q(room=result) & Q(start__date=date_obj)).order_by('start')
             if room_availability:
-                serializer = RoomAvailabilitySerializer(room_availability, many=True)
-                return Response(data=serializer.data, status=status.HTTP_200_OK)
+                counter = 0
+                date_format = "%d-%m-%Y %H:%M:%S"
+                last = room_availability.count()
+                start_time = f"{date_obj1} 00:00:00"
+                start_date = datetime.strptime(start_time,date_format)
+
+                result = {}
+
+                for i in room_availability:
+                    i_start = i.start.strftime(date_format)
+                    i_end = i.end.strftime(date_format)
+                    if i.start.time() != start_date.time():
+                        result[counter] = {
+                            "start": start_time,
+                            "end": i_start
+                            }
+                    start_date = i.end
+                    start_time = i_end
+                    if last == counter+1:
+                        if str(i.end.time()) != '23:59:59':
+                            result[counter+1] = {
+                                "start": start_time,
+                                "end": f"{date_obj1} 23:59:59"
+                            }
+                    counter += 1
+                json_string = [i for i in result.values()]
+                return Response(data=json_string, status=status.HTTP_200_OK)
             else:
-                data = {
-                    "massage": f"Xonaning {date_obj} kuni uchun bosh vaqtlari topilmadi"
-                }
-                return Response(data, status=status.HTTP_404_NOT_FOUND)
+                data = [
+                    {
+                        "start": f"{date_obj1} 00:00:00",
+                        "end": f"{date_obj1} 23:59:59"
+                    }
+                ]
+
+            return Response(data=data, status=status.HTTP_200_OK)
         else:
             return result
 
@@ -120,34 +155,42 @@ class BookingRoomApiView(APIView):
             return Response(data={
                 'error': "Iltimos start va end maydonlarni ikkisini ham kitiring"
             }, status=status.HTTP_400_BAD_REQUEST)
-        date_format = '%Y-%m-%d %H:%M:%S'
+        date_format = '%d-%m-%Y %H:%M:%S'
         try:
             start_date = datetime.strptime(start, date_format)
-            end_time = datetime.strptime(end, date_format)
+            end_date = datetime.strptime(end, date_format)
         except ValueError:
             data = {
-                "error": "Iltimos sanalarnini y-o-k s-d-sek formatida kiriting"
+                "error": "Iltimos sanalarnini [%d-%m-%Y %H:%M:%S] formatida kiriting"
             }
             return Response(data, status=status.HTTP_400_BAD_REQUEST)
         serializer = BookingRoomSerializer(data=request.data)
         if serializer.is_valid():
-            try:
-                available = RoomAvailability.objects.get(room_id=pk, start=start_date,
-                                                         end=end_time)
-                is_booked = BookingRoom.objects.filter(Q(room_id=pk) & Q(room_availability=available)).count() > 0
-                if is_booked:
-                    return Response({
-                        "error": "Uzr, siz tanlagan vaqtda xona band qilingan"
-                    }, status=status.HTTP_410_GONE)
-                else:
-                    BookingRoom.objects.create(room_id=pk, room_availability=available, resident_name=resident['name'])
-                    return Response({
-                        "message": "Xona muvaffaqiyatli band qilindi"
-                    }, status=status.HTTP_201_CREATED)
-            except ObjectDoesNotExist:
-                data = {
-                    "message": f"Xonaning {start_date.date()} kuni uchun bosh vaqtlari topilmadi"
-                }
-                return Response(data, status=status.HTTP_404_NOT_FOUND)
+            available = BookingRoom.objects.filter(Q(room_id=pk) & Q(start__date=start_date.date()))
+            if available.count() < 1:
+                BookingRoom.objects.create(
+                    room_id=pk,
+                    start=start_date,
+                    end=end_date,
+                    resident_name=resident['name'])
+                return Response({
+                    "message": "xona muvaffaqiyatli band qilindi"
+                }, status=status.HTTP_201_CREATED)
+            else:
+                for i in available:
+                    if start_date.time() < i.start.time() < end_date.time() \
+                            or start_date.time() < i.end.time() < end_date.time() \
+                            or (start_date.time() == i.start.time() and end_date.time() == i.end.time()):
+                        return Response({
+                            "error": "uzr, siz tanlagan vaqtda xona band"
+                        }, status=status.HTTP_410_GONE)
+                BookingRoom.objects.create(
+                    room_id=pk,
+                    start=start_date,
+                    end=end_date,
+                    resident_name=resident['name'])
+                return Response({
+                    "message": "xona muvaffaqiyatli band qilindi"
+                }, status=status.HTTP_201_CREATED)
         else:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
